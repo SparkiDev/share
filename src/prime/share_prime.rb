@@ -162,7 +162,7 @@ EOF
     print "    a[0] += MUL_MOD_WORD(a[#{@last}] >> #{@shift});"
     puts " a[#{@last}] &= #{@mask};"
     0.upto(@last-1) do |i|
-        puts "    a[#{i+1}] += a[#{i}] >> 64; a[#{i}] = (uint64_t)a[#{i}];"
+        puts "    a[#{i+1}] += a[#{i}] >> 64;"
     end
     0.upto(@last) do |i|
         puts "    r[#{i}] = a[#{i}];"
@@ -423,8 +423,9 @@ EOF
     puts "(a[0] >= 0x#{bot.to_s(16)});"
     puts "    t = c * MOD_WORD;"
     0.upto(@last) do |i|
-      print "    t += a[#{i}]; r[#{i}] = t;"
-      print " t >>= 64;" if i != @last
+      print "    t += a[#{i}]; r[#{i}] = t"
+      print "; t >>= 64;" if i != @last
+      print " & 0x#{top.to_s(16)};" if i == @last
       puts
     end
     puts <<EOF

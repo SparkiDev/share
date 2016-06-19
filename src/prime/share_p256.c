@@ -353,7 +353,7 @@ static void p256_mod(uint64_t *r,uint64_t *a)
     t += a[1]; r[1] = t; t >>= 64;
     t += a[2]; r[2] = t; t >>= 64;
     t += a[3]; r[3] = t; t >>= 64;
-    t += a[4]; r[4] = t;
+    t += a[4]; r[4] = t & 0x1;
 }
 
 /**

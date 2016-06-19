@@ -297,7 +297,7 @@ static void p192_mod(uint64_t *r,uint64_t *a)
     t += a[0]; r[0] = t; t >>= 64;
     t += a[1]; r[1] = t; t >>= 64;
     t += a[2]; r[2] = t; t >>= 64;
-    t += a[3]; r[3] = t;
+    t += a[3]; r[3] = t & 0x1;
 }
 
 /**

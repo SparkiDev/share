@@ -252,7 +252,7 @@ static void p128_mod(uint64_t *r,uint64_t *a)
     t = c * MOD_WORD;
     t += a[0]; r[0] = t; t >>= 64;
     t += a[1]; r[1] = t; t >>= 64;
-    t += a[2]; r[2] = t;
+    t += a[2]; r[2] = t & 0x1;
 }
 
 /**

@@ -91,7 +91,7 @@ static void p126_mod_long(uint64_t *r, __uint128_t *a)
     a[1] += MUL_MOD_WORD(a[3] << 1);
     a[1] += a[0] >> 64; a[0] = (uint64_t)a[0];
     a[0] += MUL_MOD_WORD(a[1] >> 63); a[1] &= 0x7fffffffffffffff;
-    a[1] += a[0] >> 64; a[0] = (uint64_t)a[0];
+    a[1] += a[0] >> 64;
     r[0] = a[0];
     r[1] = a[1];
 }
@@ -222,7 +222,7 @@ static void p126_mod(uint64_t *r,uint64_t *a)
     c = (a[1] == 0x7fffffffffffffff) & (a[0] >= 0xffffffffffffffff);
     t = c * MOD_WORD;
     t += a[0]; r[0] = t; t >>= 64;
-    t += a[1]; r[1] = t;
+    t += a[1]; r[1] = t & 0x7fffffffffffffff;
 }
 
 /**
