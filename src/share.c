@@ -26,41 +26,50 @@
 #include "share_lcl.h"
 #include "random.h"
 
+/** The prime that supports up to 126-bit secrets. */
+static const uint8_t prime_126[] =
+{
+    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff 
+};
+
 /** The prime that supports up to 128-bit secrets. */
 static const uint8_t prime_128[] =
 {
-    0x01,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x33,
+    0x01, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xe7 
 };
 
 /** The prime that supports up to 192-bit secrets. */
 static const uint8_t prime_192[] =
 {
-    0x01,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x85,
+    0x01, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xe1 
 };
 
 /** The prime that supports up to 256-bit secrets. */
 static const uint8_t prime_256[] =
 {
-    0x01,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x29,
+    0x01, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xa3, 
 };
 
 /** The list of supported primes. */
 static SHARE_PRIME share_primes[] =
 {
-    /* 0x100000000000000000000000000000033 */
+    /* 0x7fffffffffffffffffffffffffffffff */
+    { 126, prime_126, sizeof(prime_126) },
+    /* 0x1ffffffffffffffffffffffffffffffe7 */
     { 128, prime_128, sizeof(prime_128) },
-    /* 1000000000000000000000000000000000000000000000085 */
+    /* 0x1ffffffffffffffffffffffffffffffffffffffffffffffe1 */
     { 192, prime_192, sizeof(prime_192) },
-    /* 0x10000000000000000000000000000000000000000000000000000000000000129 */
+    /* 0x1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa3 */
     { 256, prime_256, sizeof(prime_256) },
 };
 
@@ -73,10 +82,12 @@ static SHARE_PRIME share_primes[] =
  * @param [in]  len   The length of the secret in bits.
  * @param [out] data  The encoded prime.
  * @param [out] dlen  The length of the encoded prime in bytes.
+ * @param [out] bits  The length of the encoded prime in bits.
  * @return  NOT_FOUND when the length is greater than any supported prime.<br>
  *          NONE otherwise.
  */
-SHARE_ERR share_prime_get(uint16_t len, const uint8_t **data, uint16_t *dlen)
+SHARE_ERR share_prime_get(uint16_t len, const uint8_t **data, uint16_t *dlen,
+    uint16_t *bits)
 {
     SHARE_ERR err = NOT_FOUND;
     int i;
@@ -88,6 +99,7 @@ SHARE_ERR share_prime_get(uint16_t len, const uint8_t **data, uint16_t *dlen)
         {
             *data = share_primes[i].data;
             *dlen = share_primes[i].len;
+            *bits = share_primes[i].max;
             err = NONE;
             break;
         }
@@ -115,6 +127,7 @@ SHARE_ERR SHARE_new(uint16_t len, uint8_t parts, uint32_t flags, SHARE **share)
     SHARE_ERR err = NONE;
     SHARE *s = NULL;
     SHARE_METH *meth;
+    uint16_t prime_bits;
     uint16_t prime_len;
     const uint8_t *prime_data;
     void *prime = NULL;
@@ -137,15 +150,15 @@ SHARE_ERR SHARE_new(uint16_t len, uint8_t parts, uint32_t flags, SHARE **share)
     }
 
     /* Retrieve the matching prime. */
-    err = share_prime_get(len*8, &prime_data, &prime_len);
+    err = share_prime_get(len, &prime_data, &prime_len, &prime_bits);
     if (err != NONE) goto end;
 
     /* Retrieve an implementation. */
-    err = share_meths_get(len*8, parts, flags, &meth);
+    err = share_meths_get(prime_bits, parts, flags, &meth);
     if (err != NONE) goto end;
 
     /* Non-generic implementations are written for a prime. */
-    if (flags & SHARE_METHS_FLAG_GENERIC)
+    if (meth->flags & SHARE_METHS_FLAG_GENERIC)
     {
         err = meth->num_new(prime_len, &prime);
         if (err != NONE) goto end;
@@ -164,7 +177,7 @@ SHARE_ERR SHARE_new(uint16_t len, uint8_t parts, uint32_t flags, SHARE **share)
 
     /* Initialize object. */
     s->meth = meth;
-    s->len = len;
+    s->len = (len + 7) / 8;
     s->parts = parts;
     s->prime_len = prime_len;
     s->prime = prime;
@@ -179,7 +192,7 @@ SHARE_ERR SHARE_new(uint16_t len, uint8_t parts, uint32_t flags, SHARE **share)
     }
     memset(s->num, 0, parts * sizeof(*s->num));
     memset(s->y, 0, parts * sizeof(*s->num));
-    memset(&s->random[len], 0, prime_len - len);
+    memset(s->random, 0, prime_len - s->len);
 
     /* Create numbers to support split and join operations. */
     for (i=0; i<s->parts; i++)

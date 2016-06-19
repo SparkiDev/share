@@ -25,17 +25,19 @@ bits=ARGV[0].to_i
 num = 1<<bits
 puts "#bits = #{bits}"
 1.step(1001,2) do |i|
-  n = num + i
+  n = num - i
   p = `openssl prime #{n}`
   if p =~ /is prime/
     s = n.to_s(16)
     puts "Prime: 0x#{s}"
+    puts "Word: 0x#{i.to_s(16)}"
     s = "0"*(s.length & 1) + s
     puts "Hex bytes:"
     d = s.length & 15
+    print "    "
     0.step(s.length-1,2) do |j|
         print "0x#{s[j..j+1]}, "
-        puts if (j-d) & 15 == 14
+        print "\n    " if (j-d) & 15 == 14
     end
     puts
     puts "Num bytes: #{(s.length + 1) / 2}"

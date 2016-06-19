@@ -22,15 +22,21 @@
 
 all: share_test
 
-SHARE_IMPL=share_openssl.o share_p128.o share_p192.o share_p256.o
+SHARE_IMPL=share_openssl.o share_p126.o share_p128.o share_p192.o share_p256.o
 
+src/prime/share_p126.c: src/prime/share_prime.rb
+	ruby ./src/prime/share_prime.rb 126 1 > src/prime/share_p126.c
 src/prime/share_p128.c: src/prime/share_prime.rb
-	ruby ./src/prime/share_prime.rb 128 33 > src/prime/share_p128.c
+	ruby ./src/prime/share_prime.rb 128 19 > src/prime/share_p128.c
 src/prime/share_p192.c: src/prime/share_prime.rb
-	ruby ./src/prime/share_prime.rb 192 85 > src/prime/share_p192.c
+	ruby ./src/prime/share_prime.rb 192 1f > src/prime/share_p192.c
 src/prime/share_p256.c: src/prime/share_prime.rb
-	ruby ./src/prime/share_prime.rb 256 129 > src/prime/share_p256.c
+	ruby ./src/prime/share_prime.rb 256 5d > src/prime/share_p256.c
 
+share_p126.o: src/prime/share_p126.c src/*.h include/*.h
+	$(CC) -c $(CFLAGS) -Isrc -o $@ $<
+share_p129.o: src/prime/share_p129.c src/*.h include/*.h
+	$(CC) -c $(CFLAGS) -Isrc -o $@ $<
 share_p128.o: src/prime/share_p128.c src/*.h include/*.h
 	$(CC) -c $(CFLAGS) -Isrc -o $@ $<
 share_p192.o: src/prime/share_p192.c src/*.h include/*.h

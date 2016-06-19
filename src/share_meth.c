@@ -27,6 +27,12 @@
 /** The implementation methods for share operations. */
 SHARE_METH share_meths[] =
 {
+    /* The 126-bit prime optimized implementation. */
+    { "P126 C",
+      126, 0, 0,
+      share_p126_num_new, share_p126_num_free,
+      share_p126_num_from_bin, share_p126_num_to_bin,
+      share_p126_split, share_p126_join },
     /* The 128-bit prime optimized implementation. */
     { "P128 C",
       128, 0, 0,

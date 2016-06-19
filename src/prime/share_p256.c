@@ -26,7 +26,7 @@
 
 #define NUM_ELEMS	5
 #define NUM_BYTES	33
-#define MOD_WORD	0x129
+#define MOD_WORD	0x5d
 
 #define U128(w)		((__uint128_t)w)
 
@@ -59,7 +59,6 @@ static void p256_set_word(uint64_t *a, uint64_t w)
     a[3] = 0;
     a[4] = 0;
 }
-
 /**
  * Multiply by prime's (mod's) last word.
  *
@@ -78,15 +77,14 @@ static void p256_set_word(uint64_t *a, uint64_t w)
  */
 static void p256_mod_small(uint64_t *r, uint64_t *a)
 {
-    static const __int128_t m0 = ((__int128_t)1 << 64) + MOD_WORD;
-    __int128_t t = 0;
+    __int128_t t;
 
-    t -= MUL_MOD_WORD(a[4]);
-    t +=           m0; t += a[0]; r[0] = t; t >>= 64;
-    t += (uint64_t)-1; t += a[1]; r[1] = t; t >>= 64;
-    t += (uint64_t)-1; t += a[2]; r[2] = t; t >>= 64;
-    t += (uint64_t)-1; t += a[3]; r[3] = t; t >>= 64;
-                                  r[4] = t;
+    t = (a[4] >> 1) * MOD_WORD; a[4] &= 0x1;
+    t += a[0]; r[0] = t; t >>= 64;
+    t += a[1]; r[1] = t; t >>= 64;
+    t += a[2]; r[2] = t; t >>= 64;
+    t += a[3]; r[3] = t; t >>= 64;
+    t += a[4]; r[4] = t;
 }
 
 /**
@@ -97,25 +95,18 @@ static void p256_mod_small(uint64_t *r, uint64_t *a)
  */
 static void p256_mod_long(uint64_t *r, __uint128_t *a)
 {
-    static const __int128_t m0 = (((__int128_t)MOD_WORD) << 68) +
-        ((1 << 4) * MOD_WORD * MOD_WORD);
-    static const __int128_t m1 = ((__int128_t)MOD_WORD) << 68;
+    __uint128_t t;
 
-    a[0] += m0; a[1] += m1; a[2] += m1; a[3] += m1; a[5] += 1 << 4; a[6] += 1 << 4; a[7] += 1 << 4;
+    t = (a[4] >> 1) + ((uint64_t)a[5] << 63); a[0] += MUL_MOD_WORD(t);
+    t = (a[5] >> 1) + ((uint64_t)a[6] << 63); a[1] += MUL_MOD_WORD(t);
+    t = (a[6] >> 1) + ((uint64_t)a[7] << 63); a[2] += MUL_MOD_WORD(t);
+    t = (a[7] >> 1) + ((uint64_t)a[8] << 63); a[3] += MUL_MOD_WORD(t);
 
-    a[3] += (a[4] & 1) << 64; a[4] ^= a[4] & 1;
-
-    a[0] -= MUL_MOD_WORD(a[4]); a[0] += (0 - a[8]) & (MOD_WORD * MOD_WORD);
-    a[1] -= MUL_MOD_WORD(a[5]); a[1] += a[0] >> 64;
-    a[2] -= MUL_MOD_WORD(a[6]); a[2] += a[1] >> 64;
-    a[3] -= MUL_MOD_WORD(a[7]); a[3] += a[2] >> 64;
-                                a[4]  = a[3] >> 64;
-
-    r[0] = a[0];
-    r[1] = a[1];
-    r[2] = a[2];
+    r[0] = a[0]; a[1] += a[0] >> 64;
+    r[1] = a[1]; a[2] += a[1] >> 64;
+    r[2] = a[2]; a[3] += a[2] >> 64;
     r[3] = a[3];
-    r[4] = a[4];
+    r[4] = (a[4] & 1) + (a[3] >> 64);
 
     p256_mod_small(r, r);
 }
@@ -140,6 +131,17 @@ static void p256_mod_add(uint64_t *r, uint64_t *a, uint64_t *b)
     p256_mod_small(r, r);
 }
 
+/** Prime element 0. */
+#define P256_0	0xffffffffffffffa3
+/** Prime element 1. */
+#define P256_1	0xffffffffffffffff
+/** Prime element 2. */
+#define P256_2	0xffffffffffffffff
+/** Prime element 3. */
+#define P256_3	0xffffffffffffffff
+/** Prime element 4. */
+#define P256_4	0x1
+
 /**
  * Subtract b from a (modulo prime) and put the result r.
  *
@@ -149,29 +151,27 @@ static void p256_mod_add(uint64_t *r, uint64_t *a, uint64_t *b)
  */
 static void p256_mod_sub(uint64_t *r, uint64_t *a, uint64_t *b)
 {
-    static const __int128_t m0 = ((__int128_t)1 << 64) + MOD_WORD;
-    __int128_t t = 0;
-
-    t +=           m0; t += a[0]; t -= b[0]; r[0] = t; t >>= 64;
-    t += (uint64_t)-1; t += a[1]; t -= b[1]; r[1] = t; t >>= 64;
-    t += (uint64_t)-1; t += a[2]; t -= b[2]; r[2] = t; t >>= 64;
-    t += (uint64_t)-1; t += a[3]; t -= b[3]; r[3] = t; t >>= 64;
-                       t += a[4]; t -= b[4]; r[4] = t;
+    __uint128_t t = 0;
+    t += P256_0; t += a[0]; t -= b[0]; r[0] = t; t >>= 64;
+    t += P256_1; t += a[1]; t -= b[1]; r[1] = t; t >>= 64;
+    t += P256_2; t += a[2]; t -= b[2]; r[2] = t; t >>= 64;
+    t += P256_3; t += a[3]; t -= b[3]; r[3] = t; t >>= 64;
+    t += P256_4; t += a[4]; t -= b[4]; r[4] = t;
 
     p256_mod_small(r, r);
 }
 
 /**
- * Square the number, a, modulo the prime amd put in result in r.
+ * Square the number, a, modulo the prime and put in result in r.
  *
  * @param [in] r  The result of the squaring.
- * @param [in[ a  The number object to square.
+ * @param [in] a  The number object to square.
  */
 static void p256_mod_sqr(uint64_t *r, uint64_t *a)
 {
-    __uint128_t p128;
     uint64_t p64;
-    __uint128_t t[NUM_ELEMS*2-1];
+    __uint128_t p128;
+    __uint128_t t[9];
 
     t[0] = 0; t[1] = 0; t[2] = 0; t[3] = 0; t[4] = 0; t[5] = 0; t[6] = 0; t[7] = 0; t[8] = 0;
 
@@ -236,17 +236,33 @@ static void p256_mod_sqr(uint64_t *r, uint64_t *a)
 }
 
 /**
+ * Square the number, a, modulo the prime n times and put in result in r.
+ *
+ * @param [in] r  The result of the squaring.
+ * @param [in] a  The number object to square.
+ * @param [in] n  The number of times to square.
+ */
+static void p256_mod_sqr_n(uint64_t *r, uint64_t *a, uint16_t n)
+{
+    uint16_t i;
+
+    p256_mod_sqr(r, a);
+    for (i=1; i<n; i++)
+        p256_mod_sqr(r, r);
+}
+
+/**
  * Multiply two numbers, a and b, modulo the prime amd put in result in r.
  *
  * @param [in] r  The result of the multiplication.
- * @param [in[ a  The first operand number object.
- * @param [in[ b  The first operand number object.
+ * @param [in] a  The first operand number object.
+ * @param [in] b  The first operand number object.
  */
 static void p256_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
 {
-    __uint128_t p128;
     uint64_t p64;
-    __uint128_t t[NUM_ELEMS*2-1];
+    __uint128_t p128;
+    __uint128_t t[9];
 
     t[0] = 0; t[1] = 0; t[2] = 0; t[3] = 0; t[4] = 0; t[5] = 0; t[6] = 0; t[7] = 0; t[8] = 0;
 
@@ -328,16 +344,16 @@ static void p256_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
  */
 static void p256_mod(uint64_t *r,uint64_t *a)
 {
-    int c;
+    uint64_t c;
     __int128_t t;
 
-    c = (a[4] == 0x1) & ((a[3] > 0x0) | ((a[2] > 0x0) | ((a[1] > 0x0) | (a[0] >= MOD_WORD))));
-    t = -((0-c) & MOD_WORD);
-    t = a[0] + t; r[0] = t; t >>= 64;
-    t = a[1] + t; r[1] = t; t >>= 64;
-    t = a[2] + t; r[2] = t; t >>= 64;
-    t = a[3] + t; r[3] = t; t >>= 64;
-    r[4] = a[4] - c;
+    c = (a[4] == 0x1) & (a[3] == 0xffffffffffffffff) & (a[2] == 0xffffffffffffffff) & (a[1] == 0xffffffffffffffff) & (a[0] >= 0xffffffffffffffa3);
+    t = c * MOD_WORD;
+    t += a[0]; r[0] = t; t >>= 64;
+    t += a[1]; r[1] = t; t >>= 64;
+    t += a[2]; r[2] = t; t >>= 64;
+    t += a[3]; r[3] = t; t >>= 64;
+    t += a[4]; r[4] = t;
 }
 
 /**
@@ -348,21 +364,28 @@ static void p256_mod(uint64_t *r,uint64_t *a)
  */
 static void p256_mod_inv(uint64_t *r, uint64_t *a)
 {
-    int i;
-    uint64_t t127[NUM_ELEMS];
     uint64_t t[NUM_ELEMS];
+    uint64_t t2[NUM_ELEMS];
+    uint64_t t3[NUM_ELEMS];
+    uint64_t t21[NUM_ELEMS];
 
-    p256_mod_sqr(t, a); p256_mod_mul(t127, a, t);
-    p256_mod_sqr(t, t); p256_mod_mul(t127, t127, t);
+    p256_mod_sqr(t2, a);
+    p256_mod_sqr(t, t2);
     p256_mod_sqr(t, t);
     p256_mod_sqr(t, t);
-    p256_mod_sqr(t, t); p256_mod_mul(t127, t127, t);
-    p256_mod_sqr(t, t);
-    p256_mod_sqr(t, t);
-    p256_mod_sqr(t, t); p256_mod_mul(t127, t127, t);
-    for (i=8; i<256; i++)
-        p256_mod_sqr(t, t);
-    p256_mod_mul(r, t, t127);
+    p256_mod_sqr(t, t); p256_mod_mul(t21, a, t);
+    p256_mod_sqr_n(t2, a, 1);	p256_mod_mul(t3, t2, a);	/* 2 */
+    p256_mod_sqr_n(t2, t3, 2);	p256_mod_mul(t3, t2, t3);	/* 4 */
+    p256_mod_sqr_n(t2, t3, 1);	p256_mod_mul(t, t2, a);		/* 5 */
+    p256_mod_sqr_n(t2, t, 5);	p256_mod_mul(t3, t2, t);	/* 10 */
+    p256_mod_sqr_n(t2, t3, 10);	p256_mod_mul(t3, t2, t3);	/* 20 */
+    p256_mod_sqr_n(t2, t3, 5);	p256_mod_mul(t, t2, t);		/* 25 */
+    p256_mod_sqr_n(t2, t, 25);	p256_mod_mul(t3, t2, t);	/* 50 */
+    p256_mod_sqr_n(t2, t3, 50);	p256_mod_mul(t3, t2, t3);	/* 100 */
+    p256_mod_sqr_n(t2, t3, 25);	p256_mod_mul(t, t2, t);		/* 125 */
+    p256_mod_sqr_n(t2, t, 125);	p256_mod_mul(t, t2, t);		/* 250 */
+    p256_mod_sqr_n(t, t, 7);
+    p256_mod_mul(r, t, t21);
 }
 
 /**
@@ -410,7 +433,7 @@ SHARE_ERR share_p256_num_from_bin(const uint8_t *data, uint16_t len,
     void *num)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    int8_t i, j;
     uint64_t *n = num;
 
     if (len > NUM_BYTES)
@@ -441,7 +464,7 @@ end:
 SHARE_ERR share_p256_num_to_bin(void *num, uint8_t *data, uint16_t len)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    int8_t i, j;
     uint64_t *n = num;
 
     if (len < NUM_BYTES)
@@ -476,7 +499,7 @@ SHARE_ERR share_p256_split(void *prime, uint8_t parts, void **a, void *x,
     void *y)
 {
     SHARE_ERR err = NONE;
-    int i;
+    uint8_t i;
     uint64_t t[NUM_ELEMS], m[NUM_ELEMS];
     uint64_t **ad = (uint64_t **)a;
     uint64_t *xd = x;
@@ -519,7 +542,7 @@ SHARE_ERR share_p256_join(void *prime, uint8_t parts, void **x, void **y,
     void *secret)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    uint8_t i, j;
     uint64_t np[NUM_ELEMS], t[NUM_ELEMS];
     uint64_t **xd = (uint64_t **)x;
     uint64_t **yd = (uint64_t **)y;

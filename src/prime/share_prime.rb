@@ -27,7 +27,12 @@ class SharePrime
       @word = word
       @elems = (@mod_bits + 63) / 64
       @bytes = (@mod_bits + 7) / 8
-      @last = @elems - 1
+      @last = @elems-1
+      @shift = @mod_bits & 63
+      @mask = "0x#{((1 << @shift) - 1).to_s(16)}"
+      @shift_l = 64 - @shift
+      @prime = (1 << @mod_bits) - @word
+      @hi_bits = @mod_bits & 63
   end
 
   def write_header()
@@ -58,7 +63,7 @@ EOF
 static void p#{@bits}_copy(uint64_t *r, uint64_t *a)
 {
 EOF
-    0.upto(@elems-1) do |i|
+    0.upto(@last) do |i|
       puts "    r[#{i}] = a[#{i}];"
     end
     puts <<EOF
@@ -79,7 +84,7 @@ static void p#{@bits}_set_word(uint64_t *a, uint64_t w)
 {
     a[0] = w;
 EOF
-    1.upto(@elems-1) do |i|
+    1.upto(@last) do |i|
       puts "    a[#{i}] = 0;"
     end
     puts <<EOF
@@ -89,7 +94,6 @@ EOF
 
   def write_mod_small()
     puts <<EOF
-
 /**
  * Multiply by prime's (mod's) last word.
  *
@@ -109,6 +113,7 @@ EOF
     else
       puts "    ((a) * MOD_WORD)"
     end
+
     puts <<EOF
 
 /**
@@ -120,24 +125,21 @@ EOF
  */
 static void p#{@bits}_mod_small(uint64_t *r, uint64_t *a)
 {
-    static const __int128_t m0 = ((__int128_t)1 << 64) + MOD_WORD;
-    __int128_t t = 0;
+    __int128_t t;
 
-    t -= MUL_MOD_WORD(a[#{@last}]);
+    t = (a[#{@last}] >> #{@shift}) * MOD_WORD; a[#{@last}] &= #{@mask};
 EOF
-    m = "          m0"
-    0.upto(@last-1) do |i|
-      puts "    t += #{m}; t += a[#{i}]; r[#{i}] = t; t >>= 64;"
-      m = "(uint64_t)-1"
+    0.upto(@last) do |i|
+        print "    t += a[#{i}]; r[#{i}] = t;"
+        print " t >>= 64;" if i != @last
+        puts
     end
     puts <<EOF
-                                  r[#{@last}] = t;
 }
 EOF
   end
 
   def write_mod_long()
-    ls = 4
 puts <<EOF
 
 /**
@@ -148,29 +150,51 @@ puts <<EOF
  */
 static void p#{@bits}_mod_long(uint64_t *r, __uint128_t *a)
 {
-    static const __int128_t m0 = (((__int128_t)MOD_WORD) << #{64+ls}) +
-        ((1 << #{ls}) * MOD_WORD * MOD_WORD);
-    static const __int128_t m1 = ((__int128_t)MOD_WORD) << #{64+ls};
-
 EOF
-    print "   "
-    print " a[0] += m0;"
-    1.upto(@last-1) { |i| print " a[#{i}] += m1;" }
-    (@last+1).upto(@last*2-1) { |i| print " a[#{i}] += 1 << #{ls};" }; puts
-    puts <<EOF
-
-    a[#{@last-1}] += (a[#{@last}] & 1) << 64; a[#{@last}] ^= a[#{@last}] & 1;
-
-    a[0] -= MUL_MOD_WORD(a[#{@last}]); a[0] += (0 - a[#{@last*2}]) & (MOD_WORD * MOD_WORD);
-EOF
-    1.upto(@last-1) do |i|
-      puts "    a[#{i}] -= MUL_MOD_WORD(a[#{i+@last}]); a[#{i}] += a[#{i-1}] >> 64;"
+    print "    a[0] += MUL_MOD_WORD(a[#{@last}] >> #{@shift});"
+    puts " a[#{@last}] &= #{@mask};"
+    0.upto(@last) do |i|
+      puts "    a[#{i}] += MUL_MOD_WORD(a[#{@last+1+i}] << #{@shift_l});"
+    end
+    0.upto(@last-1) do |i|
+        puts "    a[#{i+1}] += a[#{i}] >> 64; a[#{i}] = (uint64_t)a[#{i}];"
+    end
+    print "    a[0] += MUL_MOD_WORD(a[#{@last}] >> #{@shift});"
+    puts " a[#{@last}] &= #{@mask};"
+    0.upto(@last-1) do |i|
+        puts "    a[#{i+1}] += a[#{i}] >> 64; a[#{i}] = (uint64_t)a[#{i}];"
+    end
+    0.upto(@last) do |i|
+        puts "    r[#{i}] = a[#{i}];"
     end
     puts <<EOF
-                                a[#{@last}]  = a[#{@last-1}] >> 64;
+}
+EOF
+  end
+
+  def write_mod_long_1()
+puts <<EOF
+
+/**
+ * Perform modulo operation on a product result in 128-bit elements.
+ *
+ * @param [in] r  The number reduce number.
+ * @param [in] a  The product result in 128-bit elements.
+ */
+static void p#{@bits}_mod_long(uint64_t *r, __uint128_t *a)
+{
+    __uint128_t t;
 
 EOF
-    0.upto(@last) { |i| puts "    r[#{i}] = a[#{i}];" }
+    0.upto(@last-1) do |i|
+      puts "    t = (a[#{@last+i}] >> 1) + ((uint64_t)a[#{@last+i+1}] << 63); a[#{i}] += MUL_MOD_WORD(t);"
+    end
+    puts
+    0.upto(@last-2) do |i|
+        puts "    r[#{i}] = a[#{i}]; a[#{i+1}] += a[#{i}] >> 64;"
+    end
+    puts "    r[#{@last-1}] = a[#{@last-1}];"
+    puts "    r[#{@last}] = (a[#{@last}] & 1) + (a[#{@last-1}] >> 64);"
     puts <<EOF
 
     p#{@bits}_mod_small(r, r);
@@ -206,6 +230,13 @@ EOF
   end
 
   def write_mod_sub()
+    puts
+    0.upto(@last) do |i|
+        puts "/** Prime element #{i}. */"
+        v = (@prime >> (i*64)) & 0xffffffffffffffff
+        puts "#define P#{@bits}_#{i}\t0x#{v.to_s(16)}"
+    end
+
     puts <<EOF
 
 /**
@@ -217,16 +248,11 @@ EOF
  */
 static void p#{@bits}_mod_sub(uint64_t *r, uint64_t *a, uint64_t *b)
 {
-    static const __int128_t m0 = ((__int128_t)1 << 64) + MOD_WORD;
-    __int128_t t = 0;
-
+    __uint128_t t = 0;
 EOF
-    m = "          m0"
     0.upto(@last) do |i|
-      add_mod = (i != @last) ? "t += #{m};" : "                  "
       shift_t = (i != @last) ? " t >>= 64;" : ""
-      puts "    #{add_mod} t += a[#{i}]; t -= b[#{i}]; r[#{i}] = t;#{shift_t}"
-      m = "(uint64_t)-1"
+      puts "    t += P#{@bits}_#{i}; t += a[#{i}]; t -= b[#{i}]; r[#{i}] = t;#{shift_t}"
     end
     puts <<EOF
 
@@ -236,41 +262,51 @@ EOF
   end
 
   def write_mod_sqr()
+    if @hi_bits == 1
+      p64 = "\n    uint64_t p64;"
+      t_elems = @elems * 2 - 1;
+    else
+      p64 = ""
+      t_elems = @elems * 2;
+    end
     puts <<EOF
 
 /**
- * Square the number, a, modulo the prime amd put in result in r.
+ * Square the number, a, modulo the prime and put in result in r.
  *
  * @param [in] r  The result of the squaring.
- * @param [in[ a  The number object to square.
+ * @param [in] a  The number object to square.
  */
 static void p#{@bits}_mod_sqr(uint64_t *r, uint64_t *a)
-{
+{#{p64}
     __uint128_t p128;
-    uint64_t p64;
-    __uint128_t t[NUM_ELEMS*2-1];
+    __uint128_t t[#{t_elems}];
 
 EOF
     print "   "
-    0.upto(@last*2) { |i| print " t[#{i}] = 0;" }; puts
+    0.upto(t_elems-1) { |i| print " t[#{i}] = 0;" }; puts
     puts
     0.upto(@last*2) do |i|
       0.upto(@last) do |j|
         k = i - j
         next if k < 0 || k > @last || j > k
-        v = (k != @last and j != @last) ? "p128" : "p64"
-        a = (k != @last and j != @last) ? "U128(a[#{j}])" : "a[#{j}]"
-        if j == @last and k == @last
-          puts "    #{v} = #{a};"
-        elsif j == @last and @bits <= 128
-          puts "    #{v} = a[#{k}] & (0 - #{a});"
-        elsif k == @last and @bits <= 128
-          puts "    #{v} = #{a} & (0 - a[#{k}]);"
+        if @hi_bits == 1
+          if j == @last and k == @last
+            puts "    p64 = a[#{j}];"
+          elsif (j == @last or k == @last) and @mod_bits >= 256
+            puts "    p64 = a[#{j}] * a[#{k}];"
+          elsif j == @last
+            puts "    p64 = a[#{k}] & (0 - a[#{j}]);"
+          elsif k == @last
+            puts "    p64 = a[#{j}] & (0 - a[#{k}]);"
+          else
+            puts "    p128 = U128(a[#{j}]) * a[#{k}];"
+          end
         else
-          puts "    #{v} = #{a} * a[#{k}];"
+          puts "    p128 = U128(a[#{j}]) * a[#{k}];"
         end
         0.upto(j == k ? 0 : 1) do
-          if k != @last and j != @last
+          if @hi_bits != 1 or (j != @last and k != @last)
             puts "    t[#{i}] += (uint64_t)p128;"
             puts "    t[#{i+1}] += p128 >> 64;"
           else
@@ -283,45 +319,71 @@ EOF
 
     p#{@bits}_mod_long(r, t);
 }
+
+/**
+ * Square the number, a, modulo the prime n times and put in result in r.
+ *
+ * @param [in] r  The result of the squaring.
+ * @param [in] a  The number object to square.
+ * @param [in] n  The number of times to square.
+ */
+static void p#{@bits}_mod_sqr_n(uint64_t *r, uint64_t *a, uint16_t n)
+{
+    uint16_t i;
+
+    p#{@bits}_mod_sqr(r, a);
+    for (i=1; i<n; i++)
+        p#{@bits}_mod_sqr(r, r);
+}
 EOF
   end
 
   def write_mod_mul()
+    if @hi_bits == 1
+      p64 = "\n    uint64_t p64;"
+      t_elems = @elems * 2 - 1;
+    else
+      p64 = ""
+      t_elems = @elems * 2;
+    end
     puts <<EOF
 
 /**
  * Multiply two numbers, a and b, modulo the prime amd put in result in r.
  *
  * @param [in] r  The result of the multiplication.
- * @param [in[ a  The first operand number object.
- * @param [in[ b  The first operand number object.
+ * @param [in] a  The first operand number object.
+ * @param [in] b  The first operand number object.
  */
 static void p#{@bits}_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
-{
+{#{p64}
     __uint128_t p128;
-    uint64_t p64;
-    __uint128_t t[NUM_ELEMS*2-1];
+    __uint128_t t[#{t_elems}];
 
 EOF
     print "   "
-    0.upto(@last*2) { |i| print " t[#{i}] = 0;" }; puts
+    0.upto(t_elems-1) { |i| print " t[#{i}] = 0;" }; puts
     puts
     0.upto(@last*2) do |i|
       0.upto(@last) do |j|
         k = i - j
         next if k < 0 || k > @last
-        v = (k != @last and j != @last) ? "p128" : "p64"
-        a = (k != @last and j != @last) ? "U128(a[#{j}])" : "a[#{j}]"
-        if j == @last and k == @last
-          puts "    #{v} = #{a} & b[#{k}];"
-        elsif j == @last and @bits <= 128
-          puts "    #{v} = b[#{k}] & (0 - #{a});"
-        elsif k == @last and @bits <= 128
-          puts "    #{v} = #{a} & (0 - b[#{k}]);"
+        if @hi_bits == 1
+          if j == @last and k == @last
+            puts "    p64 = a[#{j}] & b[#{k}];"
+          elsif (j == @last or k == @last) and @mod_bits >= 256
+            puts "    p64 = a[#{j}] * b[#{k}];"
+          elsif j == @last
+            puts "    p64 = b[#{k}] & (0 - a[#{j}]);"
+          elsif k == @last
+            puts "    p64 = a[#{j}] & (0 - b[#{k}]);"
+          else
+            puts "    p128 = U128(a[#{j}]) * b[#{k}];"
+          end
         else
-          puts "    #{v} = #{a} * b[#{k}];"
+          puts "    p128 = U128(a[#{j}]) * b[#{k}];"
         end
-        if k != @last and j != @last
+        if @hi_bits != 1 or (j != @last and k != @last)
           puts "    t[#{i}] += (uint64_t)p128;"
           puts "    t[#{i+1}] += p128 >> 64;"
         else
@@ -347,33 +409,54 @@ EOF
  */
 static void p#{@bits}_mod(uint64_t *r,uint64_t *a)
 {
-    int c;
+    uint64_t c;
     __int128_t t;
 
 EOF
-    print "    c = (a[#{@last}] == 0x1) & "
-    cb = ""
+    top = ((1 << (@mod_bits & 63)) - 1)
+    mid = (1 << 64) - 1
+    bot = (1 << 64) - @word
+    print "    c = (a[#{@last}] == 0x#{top.to_s(16)}) & "
     (@last-1).downto(1) do |i|
-      print "((a[#{i}] > 0x0) | "
-      cb += ")"
+      print "(a[#{i}] == 0x#{mid.to_s(16)}) & "
     end
-    puts "(a[0] >= MOD_WORD)#{cb};"
-    puts <<EOF
-    t = -((0-c) & MOD_WORD);
-EOF
-    0.upto(@last-1) do |i|
-      puts "    t = a[#{i}] + t; r[#{i}] = t; t >>= 64;"
+    puts "(a[0] >= 0x#{bot.to_s(16)});"
+    puts "    t = c * MOD_WORD;"
+    0.upto(@last) do |i|
+      print "    t += a[#{i}]; r[#{i}] = t;"
+      print " t >>= 64;" if i != @last
+      puts
     end
     puts <<EOF
-    r[#{@last}] = a[#{@last}] - c;
 }
 EOF
   end
 
   def write_mod_inv()
-    w = @word - 2
+    ls = (@word + 1).to_s(2).length
+    w = (1 << ls) - (@word + 2)
     ws = w.to_s(16)
-    h = w.to_s(2).length
+    t3 = ""
+
+    a = []
+    h = @mod_bits - ls
+    while h != 1
+      if h % 2 == 0
+        a << 2
+        h /= 2
+      elsif h % 5 == 0
+        a << 5
+        h /= 5
+        t3 = "\n    uint64_t t3[NUM_ELEMS];"
+      elsif h % 3 == 0
+        a << 3
+        h /= 3
+      else
+        a << 1
+        h -= 1;
+      end
+    end
+
     puts <<EOF
 
 /**
@@ -384,26 +467,84 @@ EOF
  */
 static void p#{@bits}_mod_inv(uint64_t *r, uint64_t *a)
 {
-    int i;
-    uint64_t t#{ws}[NUM_ELEMS];
     uint64_t t[NUM_ELEMS];
-
+    uint64_t t2[NUM_ELEMS];#{t3}
 EOF
-    a = "a"
-    v = "a"
-    1.upto(h-1) do |i|
-      print "    p#{@bits}_mod_sqr(t, #{a});"
-      a = "t"
-      if w & (1 << i) != 0
-        print " p#{@bits}_mod_mul(t#{ws}, #{v}, t);"
-        v = "t#{ws}"
-      end
+    puts "    uint64_t t#{ws}[NUM_ELEMS];" if w > 1
+    puts
+
+    wt = w >> 1
+    n = "a"
+    wn = "a"
+    ts = "t2"
+    1.upto(ls) do |i|
+      break if wt == 0
+      print "    p#{@bits}_mod_sqr(#{ts}, #{n});"
+      print " p#{@bits}_mod_mul(t#{ws}, #{wn}, #{ts});" if (wt & 1) != 0
+      wn = "t#{ws}" if (wt & 1) != 0
       puts
+      n = ts
+      ts = "t"
+      wt >>= 1
+    end
+
+    h = 1
+    n = "a"
+    a.reverse.each do |o|
+      case o
+      when 1
+        if h == 1
+            print "    \t\t\t"
+        else
+            print "    p#{@bits}_mod_sqr(t2, #{n});"
+        end
+        print "\tp#{@bits}_mod_mul(t, t2, a);"
+        puts "\t\t/* #{h+1} */"
+        h += 1
+      when 2
+        if h == 1
+           print "    \t\t\t"
+        else
+           print "    p#{@bits}_mod_sqr_n(t2, #{n}, #{h});"
+        end
+        print "\tp#{@bits}_mod_mul(t, t2, t);"
+        puts "\t\t/* #{h*2} */"
+        h *= 2
+      when 3
+        puts "    p#{@bits}_copy(t2, #{n});" if n != "a"
+        if h == 1
+           print "    \t\t\t"
+           print "\tp#{@bits}_mod_mul(t, t2, a);"
+        else
+            print "    p#{@bits}_mod_sqr_n(t, #{n}, #{h});"
+            print "\tp#{@bits}_mod_mul(t, t, t2);"
+        end
+        puts "\t\t/* #{h*2} */"
+        print "    p#{@bits}_mod_sqr_n(t, t, #{h});"
+        if h != 1
+          print "\tp#{@bits}_mod_mul(t, t, t2);"
+        else
+          print "\tp#{@bits}_mod_mul(t, t, a);"
+        end
+        puts "\t\t/* #{h*3} */"
+        h *= 3
+      when 5
+        print "    p#{@bits}_mod_sqr_n(t2, #{n}, #{h});"
+        print "\tp#{@bits}_mod_mul(t3, t2, #{n});"
+        puts "\t/* #{h*2} */"
+        print "    p#{@bits}_mod_sqr_n(t2, t3, #{2*h});"
+        print "\tp#{@bits}_mod_mul(t3, t2, t3);"
+        puts "\t/* #{h*2*2} */"
+        print "    p#{@bits}_mod_sqr_n(t2, t3, #{h});"
+        print "\tp#{@bits}_mod_mul(t, t2, #{n});"
+        puts "\t\t/* #{h*2*2+h} */"
+        h *= 5
+      end
+      n = "t"
     end
     puts <<EOF
-    for (i=#{h-1}; i<#{@bits}; i++)
-        p#{@bits}_mod_sqr(t, t);
-    p#{@bits}_mod_mul(r, t, t#{ws});
+    p#{@bits}_mod_sqr_n(t, t, #{ls});
+    p#{@bits}_mod_mul(r, t, #{wn});
 }
 EOF
   end
@@ -466,7 +607,7 @@ SHARE_ERR share_p#{@bits}_num_from_bin(const uint8_t *data, uint16_t len,
     void *num)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    int8_t i, j;
     uint64_t *n = num;
 
     if (len > NUM_BYTES)
@@ -502,7 +643,7 @@ EOF
 SHARE_ERR share_p#{@bits}_num_to_bin(void *num, uint8_t *data, uint16_t len)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    int8_t i, j;
     uint64_t *n = num;
 
     if (len < NUM_BYTES)
@@ -542,7 +683,7 @@ SHARE_ERR share_p#{@bits}_split(void *prime, uint8_t parts, void **a, void *x,
     void *y)
 {
     SHARE_ERR err = NONE;
-    int i;
+    uint8_t i;
     uint64_t t[NUM_ELEMS], m[NUM_ELEMS];
     uint64_t **ad = (uint64_t **)a;
     uint64_t *xd = x;
@@ -590,7 +731,7 @@ SHARE_ERR share_p#{@bits}_join(void *prime, uint8_t parts, void **x, void **y,
     void *secret)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    uint8_t i, j;
     uint64_t np[NUM_ELEMS], t[NUM_ELEMS];
     uint64_t **xd = (uint64_t **)x;
     uint64_t **yd = (uint64_t **)y;
@@ -670,7 +811,11 @@ EOF
     write_copy()
     write_set_word()
     write_mod_small()
-    write_mod_long()
+    if @mod_bits & 63 == 1
+        write_mod_long_1()
+    else
+        write_mod_long()
+    end
     write_mod_add()
     write_mod_sub()
     write_mod_sqr()

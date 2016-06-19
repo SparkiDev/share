@@ -24,9 +24,9 @@
 #include <string.h>
 #include "share_meth.h"
 
-#define NUM_ELEMS	4
-#define NUM_BYTES	25
-#define MOD_WORD	0x1f
+#define NUM_ELEMS	2
+#define NUM_BYTES	16
+#define MOD_WORD	0x1
 
 #define U128(w)		((__uint128_t)w)
 
@@ -36,12 +36,10 @@
  * @param [in] r  The result number object.
  * @param [in] a  The number object to copy.
  */
-static void p192_copy(uint64_t *r, uint64_t *a)
+static void p126_copy(uint64_t *r, uint64_t *a)
 {
     r[0] = a[0];
     r[1] = a[1];
-    r[2] = a[2];
-    r[3] = a[3];
 }
 
 /**
@@ -50,12 +48,10 @@ static void p192_copy(uint64_t *r, uint64_t *a)
  * @param [in] a  The number object set.
  * @param [in] w  The word sized value to set.
  */
-static void p192_set_word(uint64_t *a, uint64_t w)
+static void p126_set_word(uint64_t *a, uint64_t w)
 {
     a[0] = w;
     a[1] = 0;
-    a[2] = 0;
-    a[3] = 0;
 }
 /**
  * Multiply by prime's (mod's) last word.
@@ -64,7 +60,7 @@ static void p192_set_word(uint64_t *a, uint64_t w)
  * @return  The multiplicative result.
  */
 #define MUL_MOD_WORD(a) \
-    ((a) * MOD_WORD)
+    ((a))
 
 /**
  * Perform modulo operation on number, a, up to 16-bits longer than the prime
@@ -73,15 +69,13 @@ static void p192_set_word(uint64_t *a, uint64_t w)
  * @param [in] r  The result of the reduction.
  * @param [in] a  The number to operate on.
  */
-static void p192_mod_small(uint64_t *r, uint64_t *a)
+static void p126_mod_small(uint64_t *r, uint64_t *a)
 {
     __int128_t t;
 
-    t = (a[3] >> 1) * MOD_WORD; a[3] &= 0x1;
+    t = (a[1] >> 63) * MOD_WORD; a[1] &= 0x7fffffffffffffff;
     t += a[0]; r[0] = t; t >>= 64;
-    t += a[1]; r[1] = t; t >>= 64;
-    t += a[2]; r[2] = t; t >>= 64;
-    t += a[3]; r[3] = t;
+    t += a[1]; r[1] = t;
 }
 
 /**
@@ -90,20 +84,16 @@ static void p192_mod_small(uint64_t *r, uint64_t *a)
  * @param [in] r  The number reduce number.
  * @param [in] a  The product result in 128-bit elements.
  */
-static void p192_mod_long(uint64_t *r, __uint128_t *a)
+static void p126_mod_long(uint64_t *r, __uint128_t *a)
 {
-    __uint128_t t;
-
-    t = (a[3] >> 1) + ((uint64_t)a[4] << 63); a[0] += MUL_MOD_WORD(t);
-    t = (a[4] >> 1) + ((uint64_t)a[5] << 63); a[1] += MUL_MOD_WORD(t);
-    t = (a[5] >> 1) + ((uint64_t)a[6] << 63); a[2] += MUL_MOD_WORD(t);
-
-    r[0] = a[0]; a[1] += a[0] >> 64;
-    r[1] = a[1]; a[2] += a[1] >> 64;
-    r[2] = a[2];
-    r[3] = (a[3] & 1) + (a[2] >> 64);
-
-    p192_mod_small(r, r);
+    a[0] += MUL_MOD_WORD(a[1] >> 63); a[1] &= 0x7fffffffffffffff;
+    a[0] += MUL_MOD_WORD(a[2] << 1);
+    a[1] += MUL_MOD_WORD(a[3] << 1);
+    a[1] += a[0] >> 64; a[0] = (uint64_t)a[0];
+    a[0] += MUL_MOD_WORD(a[1] >> 63); a[1] &= 0x7fffffffffffffff;
+    a[1] += a[0] >> 64; a[0] = (uint64_t)a[0];
+    r[0] = a[0];
+    r[1] = a[1];
 }
 
 /**
@@ -113,26 +103,20 @@ static void p192_mod_long(uint64_t *r, __uint128_t *a)
  * @param [in] a  The first operand.
  * @param [in] b  The second operand.
  */
-static void p192_mod_add(uint64_t *r, uint64_t *a, uint64_t *b)
+static void p126_mod_add(uint64_t *r, uint64_t *a, uint64_t *b)
 {
     __int128_t t;
 
     t  = a[0]; t += b[0]; r[0] = t; t >>= 64;
-    t += a[1]; t += b[1]; r[1] = t; t >>= 64;
-    t += a[2]; t += b[2]; r[2] = t; t >>= 64;
-    t += a[3]; t += b[3]; r[3] = t;
+    t += a[1]; t += b[1]; r[1] = t;
 
-    p192_mod_small(r, r);
+    p126_mod_small(r, r);
 }
 
 /** Prime element 0. */
-#define P192_0	0xffffffffffffffe1
+#define P126_0	0xffffffffffffffff
 /** Prime element 1. */
-#define P192_1	0xffffffffffffffff
-/** Prime element 2. */
-#define P192_2	0xffffffffffffffff
-/** Prime element 3. */
-#define P192_3	0x1
+#define P126_1	0x7fffffffffffffff
 
 /**
  * Subtract b from a (modulo prime) and put the result r.
@@ -141,15 +125,13 @@ static void p192_mod_add(uint64_t *r, uint64_t *a, uint64_t *b)
  * @param [in] a  The first operand.
  * @param [in] b  The second operand.
  */
-static void p192_mod_sub(uint64_t *r, uint64_t *a, uint64_t *b)
+static void p126_mod_sub(uint64_t *r, uint64_t *a, uint64_t *b)
 {
     __uint128_t t = 0;
-    t += P192_0; t += a[0]; t -= b[0]; r[0] = t; t >>= 64;
-    t += P192_1; t += a[1]; t -= b[1]; r[1] = t; t >>= 64;
-    t += P192_2; t += a[2]; t -= b[2]; r[2] = t; t >>= 64;
-    t += P192_3; t += a[3]; t -= b[3]; r[3] = t;
+    t += P126_0; t += a[0]; t -= b[0]; r[0] = t; t >>= 64;
+    t += P126_1; t += a[1]; t -= b[1]; r[1] = t;
 
-    p192_mod_small(r, r);
+    p126_mod_small(r, r);
 }
 
 /**
@@ -158,13 +140,12 @@ static void p192_mod_sub(uint64_t *r, uint64_t *a, uint64_t *b)
  * @param [in] r  The result of the squaring.
  * @param [in] a  The number object to square.
  */
-static void p192_mod_sqr(uint64_t *r, uint64_t *a)
+static void p126_mod_sqr(uint64_t *r, uint64_t *a)
 {
-    uint64_t p64;
     __uint128_t p128;
-    __uint128_t t[7];
+    __uint128_t t[4];
 
-    t[0] = 0; t[1] = 0; t[2] = 0; t[3] = 0; t[4] = 0; t[5] = 0; t[6] = 0;
+    t[0] = 0; t[1] = 0; t[2] = 0; t[3] = 0;
 
     p128 = U128(a[0]) * a[0];
     t[0] += (uint64_t)p128;
@@ -174,35 +155,11 @@ static void p192_mod_sqr(uint64_t *r, uint64_t *a)
     t[2] += p128 >> 64;
     t[1] += (uint64_t)p128;
     t[2] += p128 >> 64;
-    p128 = U128(a[0]) * a[2];
-    t[2] += (uint64_t)p128;
-    t[3] += p128 >> 64;
-    t[2] += (uint64_t)p128;
-    t[3] += p128 >> 64;
     p128 = U128(a[1]) * a[1];
     t[2] += (uint64_t)p128;
     t[3] += p128 >> 64;
-    p64 = a[0] & (0 - a[3]);
-    t[3] += p64;
-    t[3] += p64;
-    p128 = U128(a[1]) * a[2];
-    t[3] += (uint64_t)p128;
-    t[4] += p128 >> 64;
-    t[3] += (uint64_t)p128;
-    t[4] += p128 >> 64;
-    p64 = a[1] & (0 - a[3]);
-    t[4] += p64;
-    t[4] += p64;
-    p128 = U128(a[2]) * a[2];
-    t[4] += (uint64_t)p128;
-    t[5] += p128 >> 64;
-    p64 = a[2] & (0 - a[3]);
-    t[5] += p64;
-    t[5] += p64;
-    p64 = a[3];
-    t[6] += p64;
 
-    p192_mod_long(r, t);
+    p126_mod_long(r, t);
 }
 
 /**
@@ -212,13 +169,13 @@ static void p192_mod_sqr(uint64_t *r, uint64_t *a)
  * @param [in] a  The number object to square.
  * @param [in] n  The number of times to square.
  */
-static void p192_mod_sqr_n(uint64_t *r, uint64_t *a, uint16_t n)
+static void p126_mod_sqr_n(uint64_t *r, uint64_t *a, uint16_t n)
 {
     uint16_t i;
 
-    p192_mod_sqr(r, a);
+    p126_mod_sqr(r, a);
     for (i=1; i<n; i++)
-        p192_mod_sqr(r, r);
+        p126_mod_sqr(r, r);
 }
 
 /**
@@ -228,13 +185,12 @@ static void p192_mod_sqr_n(uint64_t *r, uint64_t *a, uint16_t n)
  * @param [in] a  The first operand number object.
  * @param [in] b  The first operand number object.
  */
-static void p192_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
+static void p126_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
 {
-    uint64_t p64;
     __uint128_t p128;
-    __uint128_t t[7];
+    __uint128_t t[4];
 
-    t[0] = 0; t[1] = 0; t[2] = 0; t[3] = 0; t[4] = 0; t[5] = 0; t[6] = 0;
+    t[0] = 0; t[1] = 0; t[2] = 0; t[3] = 0;
 
     p128 = U128(a[0]) * b[0];
     t[0] += (uint64_t)p128;
@@ -245,40 +201,11 @@ static void p192_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
     p128 = U128(a[1]) * b[0];
     t[1] += (uint64_t)p128;
     t[2] += p128 >> 64;
-    p128 = U128(a[0]) * b[2];
-    t[2] += (uint64_t)p128;
-    t[3] += p128 >> 64;
     p128 = U128(a[1]) * b[1];
     t[2] += (uint64_t)p128;
     t[3] += p128 >> 64;
-    p128 = U128(a[2]) * b[0];
-    t[2] += (uint64_t)p128;
-    t[3] += p128 >> 64;
-    p64 = a[0] & (0 - b[3]);
-    t[3] += p64;
-    p128 = U128(a[1]) * b[2];
-    t[3] += (uint64_t)p128;
-    t[4] += p128 >> 64;
-    p128 = U128(a[2]) * b[1];
-    t[3] += (uint64_t)p128;
-    t[4] += p128 >> 64;
-    p64 = b[0] & (0 - a[3]);
-    t[3] += p64;
-    p64 = a[1] & (0 - b[3]);
-    t[4] += p64;
-    p128 = U128(a[2]) * b[2];
-    t[4] += (uint64_t)p128;
-    t[5] += p128 >> 64;
-    p64 = b[1] & (0 - a[3]);
-    t[4] += p64;
-    p64 = a[2] & (0 - b[3]);
-    t[5] += p64;
-    p64 = b[2] & (0 - a[3]);
-    t[5] += p64;
-    p64 = a[3] & b[3];
-    t[6] += p64;
 
-    p192_mod_long(r, t);
+    p126_mod_long(r, t);
 }
 
 /**
@@ -287,17 +214,15 @@ static void p192_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
  * @param [in] r  The result of the reduction.
  * @param [in] a  The number to reduce.
  */
-static void p192_mod(uint64_t *r,uint64_t *a)
+static void p126_mod(uint64_t *r,uint64_t *a)
 {
     uint64_t c;
     __int128_t t;
 
-    c = (a[3] == 0x1) & (a[2] == 0xffffffffffffffff) & (a[1] == 0xffffffffffffffff) & (a[0] >= 0xffffffffffffffe1);
+    c = (a[1] == 0x7fffffffffffffff) & (a[0] >= 0xffffffffffffffff);
     t = c * MOD_WORD;
     t += a[0]; r[0] = t; t >>= 64;
-    t += a[1]; r[1] = t; t >>= 64;
-    t += a[2]; r[2] = t; t >>= 64;
-    t += a[3]; r[3] = t;
+    t += a[1]; r[1] = t;
 }
 
 /**
@@ -306,31 +231,23 @@ static void p192_mod(uint64_t *r,uint64_t *a)
  * @param [in] r  The result of the inversion.
  * @param [in] a  The number to invert.
  */
-static void p192_mod_inv(uint64_t *r, uint64_t *a)
+static void p126_mod_inv(uint64_t *r, uint64_t *a)
 {
     uint64_t t[NUM_ELEMS];
     uint64_t t2[NUM_ELEMS];
     uint64_t t3[NUM_ELEMS];
-    uint64_t t1f[NUM_ELEMS];
 
-    p192_mod_sqr(t2, a); p192_mod_mul(t1f, a, t2);
-    p192_mod_sqr(t, t2); p192_mod_mul(t1f, t1f, t);
-    p192_mod_sqr(t, t); p192_mod_mul(t1f, t1f, t);
-    p192_mod_sqr(t, t); p192_mod_mul(t1f, t1f, t);
-    				p192_mod_mul(t, t2, a);		/* 2 */
-    p192_mod_sqr_n(t, t, 1);	p192_mod_mul(t, t, a);		/* 3 */
-    p192_mod_sqr_n(t2, t, 3);	p192_mod_mul(t3, t2, t);	/* 6 */
-    p192_mod_sqr_n(t2, t3, 6);	p192_mod_mul(t3, t2, t3);	/* 12 */
-    p192_mod_sqr_n(t2, t3, 3);	p192_mod_mul(t, t2, t);		/* 15 */
-    p192_mod_sqr_n(t2, t, 15);	p192_mod_mul(t, t2, t);		/* 30 */
-    p192_mod_sqr(t2, t);	p192_mod_mul(t, t2, a);		/* 31 */
-    p192_copy(t2, t);
-    p192_mod_sqr_n(t, t, 31);	p192_mod_mul(t, t, t2);		/* 62 */
-    p192_mod_sqr_n(t, t, 31);	p192_mod_mul(t, t, t2);		/* 93 */
-    p192_mod_sqr_n(t2, t, 93);	p192_mod_mul(t, t2, t);		/* 186 */
-    p192_mod_sqr(t2, t);	p192_mod_mul(t, t2, a);		/* 187 */
-    p192_mod_sqr_n(t, t, 6);
-    p192_mod_mul(r, t, t1f);
+    p126_mod_sqr_n(t2, a, 1);	p126_mod_mul(t3, t2, a);	/* 2 */
+    p126_mod_sqr_n(t2, t3, 2);	p126_mod_mul(t3, t2, t3);	/* 4 */
+    p126_mod_sqr_n(t2, t3, 1);	p126_mod_mul(t, t2, a);		/* 5 */
+    p126_mod_sqr_n(t2, t, 5);	p126_mod_mul(t3, t2, t);	/* 10 */
+    p126_mod_sqr_n(t2, t3, 10);	p126_mod_mul(t3, t2, t3);	/* 20 */
+    p126_mod_sqr_n(t2, t3, 5);	p126_mod_mul(t, t2, t);		/* 25 */
+    p126_mod_sqr_n(t2, t, 25);	p126_mod_mul(t3, t2, t);	/* 50 */
+    p126_mod_sqr_n(t2, t3, 50);	p126_mod_mul(t3, t2, t3);	/* 100 */
+    p126_mod_sqr_n(t2, t3, 25);	p126_mod_mul(t, t2, t);		/* 125 */
+    p126_mod_sqr_n(t, t, 2);
+    p126_mod_mul(r, t, a);
 }
 
 /**
@@ -341,7 +258,7 @@ static void p192_mod_inv(uint64_t *r, uint64_t *a)
  * @return  ALLOC when dynamic memory allocation fails.<br>
  *          NONE otherwise.
  */
-SHARE_ERR share_p192_num_new(uint16_t len, void **num)
+SHARE_ERR share_p126_num_new(uint16_t len, void **num)
 {
     SHARE_ERR err = NONE;
 
@@ -359,7 +276,7 @@ SHARE_ERR share_p192_num_new(uint16_t len, void **num)
  *
  * @param [in] num  The number object.
  */
-void share_p192_num_free(void *num)
+void share_p126_num_free(void *num)
 {
     if (num != NULL) free(num);
 }
@@ -374,7 +291,7 @@ void share_p192_num_free(void *num)
  * @return  PARAM_BAD_LEN when encoding is too long for data.<br>
  *          NONE otherwise.
  */
-SHARE_ERR share_p192_num_from_bin(const uint8_t *data, uint16_t len,
+SHARE_ERR share_p126_num_from_bin(const uint8_t *data, uint16_t len,
     void *num)
 {
     SHARE_ERR err = NONE;
@@ -406,7 +323,7 @@ end:
  * @return  PARAM_BAD_LEN when encoding is too long for data.<br>
  *          NONE otherwise.
  */
-SHARE_ERR share_p192_num_to_bin(void *num, uint8_t *data, uint16_t len)
+SHARE_ERR share_p126_num_to_bin(void *num, uint8_t *data, uint16_t len)
 {
     SHARE_ERR err = NONE;
     int8_t i, j;
@@ -440,7 +357,7 @@ end:
  * @return  ALLOC when dynamic memory allocation fails.<br>
  *          NONE otherwise.
  */
-SHARE_ERR share_p192_split(void *prime, uint8_t parts, void **a, void *x,
+SHARE_ERR share_p126_split(void *prime, uint8_t parts, void **a, void *x,
     void *y)
 {
     SHARE_ERR err = NONE;
@@ -453,18 +370,18 @@ SHARE_ERR share_p192_split(void *prime, uint8_t parts, void **a, void *x,
     prime = prime;
 
     /* y = x^0.a[0] + x^1.a[1] - minimum of two parts. */
-    p192_mod_mul(t, ad[1], xd);
-    p192_mod_add(yd, ad[0], t);
+    p126_mod_mul(t, ad[1], xd);
+    p126_mod_add(yd, ad[0], t);
 
-    p192_copy(m, xd);
+    p126_copy(m, xd);
     for (i=2; i<parts; i++)
     {
         /* y += x^i.a[i] (m = x^i) */
-        p192_mod_mul(m, m, xd);
-        p192_mod_mul(t, ad[i], m);
-        p192_mod_add(yd, yd, t);
+        p126_mod_mul(m, m, xd);
+        p126_mod_mul(t, ad[i], m);
+        p126_mod_add(yd, yd, t);
     }
-    p192_mod(yd, yd);
+    p126_mod(yd, yd);
 
     return err;
 }
@@ -483,7 +400,7 @@ SHARE_ERR share_p192_split(void *prime, uint8_t parts, void **a, void *x,
  * @return  ALLOC when dynamic memory allocation fails.<br>
  *          NONE otherwise.
  */
-SHARE_ERR share_p192_join(void *prime, uint8_t parts, void **x, void **y,
+SHARE_ERR share_p126_join(void *prime, uint8_t parts, void **x, void **y,
     void *secret)
 {
     SHARE_ERR err = NONE;
@@ -506,9 +423,9 @@ SHARE_ERR share_p192_join(void *prime, uint8_t parts, void **x, void **y,
     }
 
     /* np = x[0] * x[1] * .. * x[parts-1] */
-    p192_copy(np, xd[0]);
+    p126_copy(np, xd[0]);
     for (i=1; i<parts; i++)
-        p192_mod_mul(np, np, x[i]);
+        p126_mod_mul(np, np, x[i]);
 
     /* Calculate all the denominators. */
     for (i=0; i<parts; i++)
@@ -516,19 +433,19 @@ SHARE_ERR share_p192_join(void *prime, uint8_t parts, void **x, void **y,
         /* d[i] = x[i] * (product of all x[j] - x[i] where i != j). */
         n = &nr[i*NUM_ELEMS];
         d = &dr[i*NUM_ELEMS];
-        p192_set_word(d, 1);
+        p126_set_word(d, 1);
         for (j=0; j<parts; j++)
         {
             if (i == j)
                 continue;
 
-            p192_mod_sub(t, xd[j], xd[i]);
-            p192_mod_mul(d, d, t);
+            p126_mod_sub(t, xd[j], xd[i]);
+            p126_mod_mul(d, d, t);
         }
-        p192_mod_mul(d, d, xd[i]);
+        p126_mod_mul(d, d, xd[i]);
 
         /* n[i] = y[i].np (as x[i] is multiplied into denominator) */
-        p192_mod_mul(n, np, yd[i]);
+        p126_mod_mul(n, np, yd[i]);
     }
 
     /* Convert numerators to common denominator and sum. */
@@ -540,19 +457,19 @@ SHARE_ERR share_p192_join(void *prime, uint8_t parts, void **x, void **y,
             if (i == j)
                 continue;
             d = &dr[j*NUM_ELEMS];
-            p192_mod_mul(n, n, d);
+            p126_mod_mul(n, n, d);
         }
         if (i > 0)
-            p192_mod_add(nr, nr, n);
+            p126_mod_add(nr, nr, n);
     }
     /* Common denominator is product of all denominators. */
     for (i=1; i<parts; i++)
-        p192_mod_mul(dr, dr, &dr[i*NUM_ELEMS]);
+        p126_mod_mul(dr, dr, &dr[i*NUM_ELEMS]);
 
     /* secret = inverse denominator * sum of numerators. */
-    p192_mod_inv(t, dr);
-    p192_mod_mul(sd, t, nr);
-    p192_mod(sd, sd);
+    p126_mod_inv(t, dr);
+    p126_mod_mul(sd, t, nr);
+    p126_mod(sd, sd);
 
 end:
     if (dr != NULL) free(dr);

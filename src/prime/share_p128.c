@@ -26,7 +26,7 @@
 
 #define NUM_ELEMS	3
 #define NUM_BYTES	17
-#define MOD_WORD	0x33
+#define MOD_WORD	0x19
 
 #define U128(w)		((__uint128_t)w)
 
@@ -55,7 +55,6 @@ static void p128_set_word(uint64_t *a, uint64_t w)
     a[1] = 0;
     a[2] = 0;
 }
-
 /**
  * Multiply by prime's (mod's) last word.
  *
@@ -63,7 +62,7 @@ static void p128_set_word(uint64_t *a, uint64_t w)
  * @return  The multiplicative result.
  */
 #define MUL_MOD_WORD(a) \
-    (((a) << 5) + ((a) << 4) + ((a) << 1) + (a))
+    (((a) << 4) + ((a) << 3) + (a))
 
 /**
  * Perform modulo operation on number, a, up to 16-bits longer than the prime
@@ -74,13 +73,12 @@ static void p128_set_word(uint64_t *a, uint64_t w)
  */
 static void p128_mod_small(uint64_t *r, uint64_t *a)
 {
-    static const __int128_t m0 = ((__int128_t)1 << 64) + MOD_WORD;
-    __int128_t t = 0;
+    __int128_t t;
 
-    t -= MUL_MOD_WORD(a[2]);
-    t +=           m0; t += a[0]; r[0] = t; t >>= 64;
-    t += (uint64_t)-1; t += a[1]; r[1] = t; t >>= 64;
-                                  r[2] = t;
+    t = (a[2] >> 1) * MOD_WORD; a[2] &= 0x1;
+    t += a[0]; r[0] = t; t >>= 64;
+    t += a[1]; r[1] = t; t >>= 64;
+    t += a[2]; r[2] = t;
 }
 
 /**
@@ -91,21 +89,14 @@ static void p128_mod_small(uint64_t *r, uint64_t *a)
  */
 static void p128_mod_long(uint64_t *r, __uint128_t *a)
 {
-    static const __int128_t m0 = (((__int128_t)MOD_WORD) << 68) +
-        ((1 << 4) * MOD_WORD * MOD_WORD);
-    static const __int128_t m1 = ((__int128_t)MOD_WORD) << 68;
+    __uint128_t t;
 
-    a[0] += m0; a[1] += m1; a[3] += 1 << 4;
+    t = (a[2] >> 1) + ((uint64_t)a[3] << 63); a[0] += MUL_MOD_WORD(t);
+    t = (a[3] >> 1) + ((uint64_t)a[4] << 63); a[1] += MUL_MOD_WORD(t);
 
-    a[1] += (a[2] & 1) << 64; a[2] ^= a[2] & 1;
-
-    a[0] -= MUL_MOD_WORD(a[2]); a[0] += (0 - a[4]) & (MOD_WORD * MOD_WORD);
-    a[1] -= MUL_MOD_WORD(a[3]); a[1] += a[0] >> 64;
-                                a[2]  = a[1] >> 64;
-
-    r[0] = a[0];
+    r[0] = a[0]; a[1] += a[0] >> 64;
     r[1] = a[1];
-    r[2] = a[2];
+    r[2] = (a[2] & 1) + (a[1] >> 64);
 
     p128_mod_small(r, r);
 }
@@ -128,6 +119,13 @@ static void p128_mod_add(uint64_t *r, uint64_t *a, uint64_t *b)
     p128_mod_small(r, r);
 }
 
+/** Prime element 0. */
+#define P128_0	0xffffffffffffffe7
+/** Prime element 1. */
+#define P128_1	0xffffffffffffffff
+/** Prime element 2. */
+#define P128_2	0x1
+
 /**
  * Subtract b from a (modulo prime) and put the result r.
  *
@@ -137,27 +135,25 @@ static void p128_mod_add(uint64_t *r, uint64_t *a, uint64_t *b)
  */
 static void p128_mod_sub(uint64_t *r, uint64_t *a, uint64_t *b)
 {
-    static const __int128_t m0 = ((__int128_t)1 << 64) + MOD_WORD;
-    __int128_t t = 0;
-
-    t +=           m0; t += a[0]; t -= b[0]; r[0] = t; t >>= 64;
-    t += (uint64_t)-1; t += a[1]; t -= b[1]; r[1] = t; t >>= 64;
-                       t += a[2]; t -= b[2]; r[2] = t;
+    __uint128_t t = 0;
+    t += P128_0; t += a[0]; t -= b[0]; r[0] = t; t >>= 64;
+    t += P128_1; t += a[1]; t -= b[1]; r[1] = t; t >>= 64;
+    t += P128_2; t += a[2]; t -= b[2]; r[2] = t;
 
     p128_mod_small(r, r);
 }
 
 /**
- * Square the number, a, modulo the prime amd put in result in r.
+ * Square the number, a, modulo the prime and put in result in r.
  *
  * @param [in] r  The result of the squaring.
- * @param [in[ a  The number object to square.
+ * @param [in] a  The number object to square.
  */
 static void p128_mod_sqr(uint64_t *r, uint64_t *a)
 {
-    __uint128_t p128;
     uint64_t p64;
-    __uint128_t t[NUM_ELEMS*2-1];
+    __uint128_t p128;
+    __uint128_t t[5];
 
     t[0] = 0; t[1] = 0; t[2] = 0; t[3] = 0; t[4] = 0;
 
@@ -185,17 +181,33 @@ static void p128_mod_sqr(uint64_t *r, uint64_t *a)
 }
 
 /**
+ * Square the number, a, modulo the prime n times and put in result in r.
+ *
+ * @param [in] r  The result of the squaring.
+ * @param [in] a  The number object to square.
+ * @param [in] n  The number of times to square.
+ */
+static void p128_mod_sqr_n(uint64_t *r, uint64_t *a, uint16_t n)
+{
+    uint16_t i;
+
+    p128_mod_sqr(r, a);
+    for (i=1; i<n; i++)
+        p128_mod_sqr(r, r);
+}
+
+/**
  * Multiply two numbers, a and b, modulo the prime amd put in result in r.
  *
  * @param [in] r  The result of the multiplication.
- * @param [in[ a  The first operand number object.
- * @param [in[ b  The first operand number object.
+ * @param [in] a  The first operand number object.
+ * @param [in] b  The first operand number object.
  */
 static void p128_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
 {
-    __uint128_t p128;
     uint64_t p64;
-    __uint128_t t[NUM_ELEMS*2-1];
+    __uint128_t p128;
+    __uint128_t t[5];
 
     t[0] = 0; t[1] = 0; t[2] = 0; t[3] = 0; t[4] = 0;
 
@@ -233,14 +245,14 @@ static void p128_mod_mul(uint64_t *r, uint64_t *a, uint64_t *b)
  */
 static void p128_mod(uint64_t *r,uint64_t *a)
 {
-    int c;
+    uint64_t c;
     __int128_t t;
 
-    c = (a[2] == 0x1) & ((a[1] > 0x0) | (a[0] >= MOD_WORD));
-    t = -((0-c) & MOD_WORD);
-    t = a[0] + t; r[0] = t; t >>= 64;
-    t = a[1] + t; r[1] = t; t >>= 64;
-    r[2] = a[2] - c;
+    c = (a[2] == 0x1) & (a[1] == 0xffffffffffffffff) & (a[0] >= 0xffffffffffffffe7);
+    t = c * MOD_WORD;
+    t += a[0]; r[0] = t; t >>= 64;
+    t += a[1]; r[1] = t; t >>= 64;
+    t += a[2]; r[2] = t;
 }
 
 /**
@@ -251,18 +263,24 @@ static void p128_mod(uint64_t *r,uint64_t *a)
  */
 static void p128_mod_inv(uint64_t *r, uint64_t *a)
 {
-    int i;
-    uint64_t t31[NUM_ELEMS];
     uint64_t t[NUM_ELEMS];
+    uint64_t t2[NUM_ELEMS];
+    uint64_t t3[NUM_ELEMS];
+    uint64_t t5[NUM_ELEMS];
 
-    p128_mod_sqr(t, a);
-    p128_mod_sqr(t, t);
-    p128_mod_sqr(t, t);
-    p128_mod_sqr(t, t); p128_mod_mul(t31, a, t);
-    p128_mod_sqr(t, t); p128_mod_mul(t31, t31, t);
-    for (i=5; i<128; i++)
-        p128_mod_sqr(t, t);
-    p128_mod_mul(r, t, t31);
+    p128_mod_sqr(t2, a);
+    p128_mod_sqr(t, t2); p128_mod_mul(t5, a, t);
+    				p128_mod_mul(t, t2, a);		/* 2 */
+    p128_mod_sqr_n(t, t, 1);	p128_mod_mul(t, t, a);		/* 3 */
+    p128_mod_sqr_n(t2, t, 3);	p128_mod_mul(t3, t2, t);	/* 6 */
+    p128_mod_sqr_n(t2, t3, 6);	p128_mod_mul(t3, t2, t3);	/* 12 */
+    p128_mod_sqr_n(t2, t3, 3);	p128_mod_mul(t, t2, t);		/* 15 */
+    p128_mod_sqr_n(t2, t, 15);	p128_mod_mul(t, t2, t);		/* 30 */
+    p128_mod_sqr(t2, t);	p128_mod_mul(t, t2, a);		/* 31 */
+    p128_mod_sqr_n(t2, t, 31);	p128_mod_mul(t, t2, t);		/* 62 */
+    p128_mod_sqr_n(t2, t, 62);	p128_mod_mul(t, t2, t);		/* 124 */
+    p128_mod_sqr_n(t, t, 5);
+    p128_mod_mul(r, t, t5);
 }
 
 /**
@@ -310,7 +328,7 @@ SHARE_ERR share_p128_num_from_bin(const uint8_t *data, uint16_t len,
     void *num)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    int8_t i, j;
     uint64_t *n = num;
 
     if (len > NUM_BYTES)
@@ -341,7 +359,7 @@ end:
 SHARE_ERR share_p128_num_to_bin(void *num, uint8_t *data, uint16_t len)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    int8_t i, j;
     uint64_t *n = num;
 
     if (len < NUM_BYTES)
@@ -376,7 +394,7 @@ SHARE_ERR share_p128_split(void *prime, uint8_t parts, void **a, void *x,
     void *y)
 {
     SHARE_ERR err = NONE;
-    int i;
+    uint8_t i;
     uint64_t t[NUM_ELEMS], m[NUM_ELEMS];
     uint64_t **ad = (uint64_t **)a;
     uint64_t *xd = x;
@@ -419,7 +437,7 @@ SHARE_ERR share_p128_join(void *prime, uint8_t parts, void **x, void **y,
     void *secret)
 {
     SHARE_ERR err = NONE;
-    int i, j;
+    uint8_t i, j;
     uint64_t np[NUM_ELEMS], t[NUM_ELEMS];
     uint64_t **xd = (uint64_t **)x;
     uint64_t **yd = (uint64_t **)y;

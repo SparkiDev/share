@@ -122,6 +122,16 @@ typedef struct share_meth_st
 SHARE_ERR share_meths_get(uint16_t len, uint8_t parts, uint32_t flags,
     SHARE_METH **meth);
 
+/* The 126-bit secret prime optimized implementation. */
+SHARE_ERR share_p126_num_new(uint16_t len, void **num);
+void share_p126_num_free(void *num);
+SHARE_ERR share_p126_num_from_bin(const uint8_t *data, uint16_t len, void *num);
+SHARE_ERR share_p126_num_to_bin(void *num, uint8_t *data, uint16_t len);
+SHARE_ERR share_p126_split(void *prime, uint8_t parts, void **a, void *x,
+    void *y);
+SHARE_ERR share_p126_join(void *prime, uint8_t parts, void **x, void **y,
+    void *secret);
+
 /* The 128-bit secret prime optimized implementation. */
 SHARE_ERR share_p128_num_new(uint16_t len, void **num);
 void share_p128_num_free(void *num);

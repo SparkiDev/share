@@ -39,7 +39,7 @@
 
 
 /* Valid length values for test. */
-static uint16_t valid[] = {128, 192, 256};
+static uint16_t valid[] = {126, 128, 192, 256};
 /* The number of valid values for test. */
 #define VALID_NUM    (int)(sizeof(valid)/sizeof(*valid))
 
@@ -186,7 +186,7 @@ void speed_join(SHARE *share, uint8_t parts, uint8_t **split, uint8_t *secret)
 /*
  * Test an implementation of secret splitting.
  *
- * @param [in] length  The length of the secret.
+ * @param [in] length  The length of the secret in bits.
  * @param [in] parts   The number of parts required to recreate secret.
  * @param [in] flags   The extra requirements on the methods to choose.
  * @param [in] num     The number of splits to create.
@@ -205,9 +205,10 @@ int test_share(uint16_t length, uint8_t parts, uint32_t flags, uint8_t num,
     uint8_t **split = NULL;
     uint32_t i, j;
     uint16_t len;
+    uint16_t l = (length + 7) / 8;
 
     /* Create share object for joing and splitting. */
-    err = SHARE_new(length/8, parts, flags, &share);
+    err = SHARE_new(length, parts, flags, &share);
     fprintf(stderr, "new: %d", err);
     if (err != NONE) goto end;
 
@@ -215,12 +216,14 @@ int test_share(uint16_t length, uint8_t parts, uint32_t flags, uint8_t num,
     err = SHARE_get_len(share, &len);
     if (err != NONE) goto end;
 
-    sec = malloc(length/8);
+    sec = malloc(l);
     if (sec == NULL) goto end;
-    secret = malloc(length/8);
+    secret = malloc(l);
     if (secret == NULL) goto end;
     /* Generate random secret. */
-    pseudo_random(secret, length/8);
+    pseudo_random(secret, l);
+    if (length < l * 8)
+        secret[0] >>= l*8 - length;
 
     split = malloc(parts * sizeof(*split));
     if (split == NULL) goto end;
@@ -271,7 +274,7 @@ int test_share(uint16_t length, uint8_t parts, uint32_t flags, uint8_t num,
     err = SHARE_join_final(share, sec);
     fprintf(stderr, ", final: %d", err);
     if (err != NONE) goto end;
-    for (i=0; i<length/8; i++)
+    for (i=0; i<l; i++)
     {
         if (sec[i] != secret[i])
         {
@@ -291,7 +294,7 @@ int test_share(uint16_t length, uint8_t parts, uint32_t flags, uint8_t num,
     else
     {
         fprintf(stderr, " s=");
-        for (i=0; i<length/8; i++)
+        for (i=0; i<l; i++)
             fprintf(stderr, "%02x", secret[i]);
         for (j=0; j<parts; j++)
         {
