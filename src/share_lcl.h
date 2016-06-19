@@ -42,6 +42,8 @@ struct share_st
     SHARE_METH *meth;
     /** The length of the secret in bytes. */
     uint16_t len;
+    /** The mask for the top word. */
+    uint8_t mask;
     /** The number of parts required to calculate the secret. */
     uint8_t parts;
     /** The length of the prime in bytes. */

@@ -178,6 +178,7 @@ SHARE_ERR SHARE_new(uint16_t len, uint8_t parts, uint32_t flags, SHARE **share)
     /* Initialize object. */
     s->meth = meth;
     s->len = (len + 7) / 8;
+    s->mask = ((len & 7) == 0) ? 0xff : (1 << (len & 7)) - 1;
     s->parts = parts;
     s->prime_len = prime_len;
     s->prime = prime;
@@ -369,6 +370,7 @@ SHARE_ERR SHARE_split_init(SHARE *share, uint8_t *secret)
     for (i=1; i<share->parts; i++)
     {
         memcpy(r, &t[share->len * (i-1)], share->len);
+        r[0] &= share->mask;
         err = share->meth->num_from_bin(share->random, share->prime_len,
             share->num[i]);
         if (err != NONE) goto end;
@@ -413,6 +415,7 @@ SHARE_ERR SHARE_split(SHARE *share, uint8_t *data)
         err = RANDOM;
         goto end;
     }
+    r[0] &= share->mask;
     err = share->meth->num_from_bin(share->random, share->prime_len, x);
     if (err != NONE) goto end;
 
