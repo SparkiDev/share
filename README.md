@@ -36,14 +36,14 @@ Run all tests: share_test
 
 Run tests with different parts and number of secrets: share_test -parts 5 -num 8
 
-Run tests with genric implementation: share_test -gen
+Run tests with generic implementation: share_test -gen
 
 Run all tests and calculate speed: share_test -speed
 
 Performance
 -----------
 
-Examples of ntru_test output on a 3.4 GHz Intel Ivy Bridge CPU:
+Examples of share_test output on a 3.4 GHz Intel Ivy Bridge CPU:
 
 ```
 ./share_test -speed
